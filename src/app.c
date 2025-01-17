@@ -5,8 +5,18 @@
 
 Server *server;
 
-void on_users_me(Request *request, Response *response) {
-  char *id = request_get_query(request, "id");
+void on_request(Request *request, Response *response) {
+  // aggregate some data before routes
+}
+
+void on_response(Request *request, Response *response) {
+  int server_time = response->time - request->time;
+
+  printf("%s %s %d %dms\n", request->method, request->path, response->status, server_time);
+}
+
+void on_user(Request *request, Response *response) {
+  const char *id = request_get_query(request, "id");
 
   cJSON *json = cJSON_CreateObject();
 
@@ -16,8 +26,8 @@ void on_users_me(Request *request, Response *response) {
   response->body = json;
 }
 
-void on_request(Request *request, Response *response) {
-  printf("%s %s\n", request->method, request->path);
+void on_redirect(Request *request, Response *response) {
+  response->redirect = "/user";
 }
 
 void on_listen(Server *server) {
@@ -40,7 +50,9 @@ int main (int arc, char **argv) {
   }
 
   server_middleware(server, on_request);
-  server_route(server, "GET", "/users/me", on_users_me);
+  server_route(server, "GET", "/user", on_user);
+  server_route(server, "GET", "/redirect", on_redirect);
+  server_response_hook(server, on_response);
 
   signal(SIGINT, on_destroy);
   signal(SIGTERM, on_destroy);

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -14,6 +15,11 @@ typedef struct {
 
 static ResponseStatusEntry STATUSES[] = {
   {OK, "200 OK"},
+  {MOVED_PERMANENTLY, "301 Moved Permanently"},
+  {FOUND, "302 Found"},
+  {BAD_REQUEST, "400 Bad Request"},
+  {UNAUTHORIZED, "401 Unauthorized"},
+  {FORBIDDEN, "403 Forbidden"},
   {NOT_FOUND, "404 Not Found"},
 };
 
@@ -50,7 +56,7 @@ const char *server_error(int code) {
   return ERRORS[0].value;
 }
 
-char *request_get_query(Request *request, char *name) {
+const char *request_get_query(Request *request, char *name) {
   for (int i = 0; i < request->query_size; i++) {
     if (strcmp(request->query[i].name, name) == 0) {
       return request->query[i].value;
@@ -68,7 +74,7 @@ static void request_add_query(Request *request, char *name, char *value) {
   query->value = value;
 }
 
-char *request_get_header(Request *request, char *name) {
+const char *request_get_header(Request *request, char *name) {
   for (int i = 0; i < request->headers_size; i++) {
     if (strcmp(request->headers[i].name, name) == 0) {
       return request->headers[i].value;
@@ -86,7 +92,7 @@ void request_add_header(Request *request, char *name, char *value) {
   header->value = value;
 }
 
-char *response_get_header(Response *response, char *name) {
+const char *response_get_header(Response *response, char *name) {
   for (int i = 0; i < response->headers_size; i++) {
     if (strcmp(response->headers[i].name, name) == 0) {
       return response->headers[i].value;
@@ -184,12 +190,12 @@ static void serialize_response(char *response_string, Response *response) {
   }
 
   response_size += sprintf(response_string + response_size, "HTTP/1.1 %s\r\n", get_status(response->status));
+  response_size += sprintf(response_string + response_size, "Content-Length: %d\r\n", body_size);
 
   for (int i = 0; i < response->headers_size; i++) {
     response_size += sprintf(response_string + response_size, "%s: %s\r\n", response->headers[i].name, response->headers[i].value);
   }
 
-  response_size += sprintf(response_string + response_size, "Content-Length: %d\r\n", body_size);
   response_size += sprintf(response_string + response_size, "\r\n");
 
   if (body != NULL) {
@@ -197,15 +203,26 @@ static void serialize_response(char *response_string, Response *response) {
   }
 }
 
-static int match_route(char *route_method, char *route_path, char *request_method, char *request_path) {
+static int match_middleware(char *route_method, char *route_path, char *request_method, char *request_path) {
   return (strcmp(route_method, request_method) == 0 || strcmp(route_method, "*") == 0) &&
-    (strcmp(route_path, request_path) == 0 || strcmp(route_path, "*") == 0);
+    (strcmp(route_path, request_path) == 0 || strcmp(route_path, "*request") == 0);
+}
+
+static int match_response_hook(char *route_method, char *route_path, char *request_method, char *request_path) {
+  return strcmp(route_method, "*") == 0 && strcmp(route_path, "*response") == 0;
+}
+
+static long long get_current_time() {
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  return (ts.tv_sec * 1000LL) + (ts.tv_nsec / 1000000);
 }
 
 static void handle_client(Server *server, int socket) {
   char request_string[SERVER_BUFFER_SIZE];
   char response_string[SERVER_BUFFER_SIZE];
 
+  long long request_time = get_current_time();
   int bytes_read = read(socket, request_string, SERVER_BUFFER_SIZE);
 
   if (bytes_read < 0) {
@@ -216,6 +233,7 @@ static void handle_client(Server *server, int socket) {
   request_string[bytes_read] = '\0';
 
   Request request = {
+    .time = request_time,
     .headers_size = 0,
     .query_size = 0,
     .body = NULL
@@ -234,22 +252,41 @@ static void handle_client(Server *server, int socket) {
   for (int i = 0; i < server->routes_size; i++) {
     ServerRoute *route = &server->routes[i];
 
-    if (match_route(route->method, route->path, request.method, request.path)) {
-      if (strcmp(route->path, "*") != 0) {
+    if (match_middleware(route->method, route->path, request.method, request.path)) {
+      if (strcmp(route->path, "*request") != 0) {
         matched_route = 1;
-
-        if (!response.status) {
-          response.status = OK;
-          response_add_header(&response, "Content-Type", "application/json");
-        }
       }
 
       route->middleware(&request, &response);
+
+      if (response.redirect) {
+        response_add_header(&response, "Location", response.redirect);
+        break;
+      }
+
+      if (response.body) {
+        response_add_header(&response, "Content-Type", "application/json");
+        break;
+      }
     }
   }
 
-  if (!matched_route && !response.status) {
-    response.status = NOT_FOUND;
+  if (!response.status) {
+    response.status = response.redirect
+      ? FOUND
+      : matched_route
+      ? OK
+      : NOT_FOUND;
+  }
+
+  response.time = get_current_time();
+
+  for (int i = 0; i < server->routes_size; i++) {
+    ServerRoute *route = &server->routes[i];
+
+    if (match_response_hook(route->method, route->path, request.method, request.path)) {
+      route->middleware(&request, &response);
+    }
   }
 
   serialize_response(response_string, &response);
@@ -282,7 +319,7 @@ int server_init(Server **server) {
   return 0;
 }
 
-void server_route(Server *server, char *method, char *path, Middleware middleware) {
+void server_route(Server *server, char *method, char *path, ServerMiddleware middleware) {
   int n = server->routes_size++;
   ServerRoute *route = &server->routes[n];
 
@@ -291,8 +328,12 @@ void server_route(Server *server, char *method, char *path, Middleware middlewar
   route->middleware = middleware;
 }
 
-void server_middleware(Server *server, Middleware middleware) {
-  server_route(server, "*", "*", middleware);
+void server_middleware(Server *server, ServerMiddleware middleware) {
+  server_route(server, "*", "*request", middleware);
+}
+
+void server_response_hook(Server *server, ServerMiddleware middleware) {
+  server_route(server, "*", "*response", middleware);
 }
 
 int server_listen(Server *server, int port, Callback callback) {
