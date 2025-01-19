@@ -288,6 +288,16 @@ static void *handle_connection(void *arg) {
 
   response.time = get_current_time();
 
+  rapid_add_response_header(&response, "X-Powered-By", "rapid");
+
+  char server_time[20];
+  sprintf(server_time, "%lld", response.time - request.time);
+  rapid_add_response_header(&response, "X-Server-Time", server_time);
+
+  char thread_id_header[20];
+  sprintf(thread_id_header, "%lu", request.thread_id);
+  rapid_add_response_header(&response, "X-Thread-Id", thread_id_header);
+
   for (int i = 0; i < connection->server->routes_size; i++) {
     rapid_route *route = &connection->server->routes[i];
 
