@@ -7,14 +7,14 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <cjson/cJSON.h>
-#include "server.h"
+#include "rapid.h"
 
 typedef struct {
-  ResponseStatus code;
+  rapid_response_status code;
   const char *value;
-} ResponseStatusEntry;
+} rapid_response_status_record;
 
-static ResponseStatusEntry STATUSES[] = {
+static rapid_response_status_record STATUSES[] = {
   {OK, "200 OK"},
   {MOVED_PERMANENTLY, "301 Moved Permanently"},
   {FOUND, "302 Found"},
@@ -35,19 +35,19 @@ static const char *get_status(int code) {
 }
 
 typedef struct {
-  ServerError code;
+  rapid_error code;
   const char *value;
-} ServerErrorEntry;
+} rapid_error_record;
 
-static ServerErrorEntry ERRORS[] = {
-  {ERR_SERVER_UNKNOWN, "Unknown error"},
-  {ERR_SERVER_ALLOC, "Server allocation failed"},
-  {ERR_SERVER_SOCKET, "Server socket failed"},
-  {ERR_SERVER_BIND, "Server binding failed"},
-  {ERR_SERVER_LISTEN, "Server listening failed"},
+static rapid_error_record ERRORS[] = {
+  {ERR_RAPID_UNKNOWN, "Unknown error"},
+  {ERR_RAPID_ALLOC, "Server allocation failed"},
+  {ERR_RAPID_SOCKET, "Server socket failed"},
+  {ERR_RAPID_BIND, "Server binding failed"},
+  {ERR_RAPID_LISTEN, "Server listening failed"},
 };
 
-const char *server_error(int code) {
+const char *rapid_get_error(int code) {
   for (int i = 0; i < sizeof(ERRORS) / sizeof(ERRORS[0]); i++) {
     if (ERRORS[i].code == code) {
       return ERRORS[i].value;
@@ -57,7 +57,7 @@ const char *server_error(int code) {
   return ERRORS[0].value;
 }
 
-const char *request_get_query(Request *request, char *name) {
+const char *rapid_get_request_query(rapid_request *request, char *name) {
   for (int i = 0; i < request->query_size; i++) {
     if (strcmp(request->query[i].name, name) == 0) {
       return request->query[i].value;
@@ -67,15 +67,15 @@ const char *request_get_query(Request *request, char *name) {
   return NULL;
 }
 
-static void request_add_query(Request *request, char *name, char *value) {
-  int n = request->query_size++;
-  Record *query = &request->query[n];
+static void rapid_add_request_query(rapid_request *request, char *name, char *value) {
+  int i = request->query_size++;
+  rapid_record *query = &request->query[i];
 
   query->name = name;
   query->value = value;
 }
 
-const char *request_get_header(Request *request, char *name) {
+const char *rapid_get_request_header(rapid_request *request, char *name) {
   for (int i = 0; i < request->headers_size; i++) {
     if (strcmp(request->headers[i].name, name) == 0) {
       return request->headers[i].value;
@@ -85,15 +85,15 @@ const char *request_get_header(Request *request, char *name) {
   return NULL;
 }
 
-void request_add_header(Request *request, char *name, char *value) {
-  int n = request->headers_size++;
-  Record *header = &request->headers[n];
+void rapid_add_request_header(rapid_request *request, char *name, char *value) {
+  int i = request->headers_size++;
+  rapid_record *header = &request->headers[i];
 
   header->name = name;
   header->value = value;
 }
 
-const char *response_get_header(Response *response, char *name) {
+const char *rapid_get_response_header(rapid_response *response, char *name) {
   for (int i = 0; i < response->headers_size; i++) {
     if (strcmp(response->headers[i].name, name) == 0) {
       return response->headers[i].value;
@@ -103,16 +103,16 @@ const char *response_get_header(Response *response, char *name) {
   return NULL;
 }
 
-void response_add_header(Response *response, char *name, char *value) {
-  int n = response->headers_size++;
-  Record *header = &response->headers[n];
+void rapid_add_response_header(rapid_response *response, char *name, char *value) {
+  int i = response->headers_size++;
+  rapid_record *header = &response->headers[i];
 
   header->name = name;
   header->value = value;
 }
 
-static void parse_request(const char *request_string, Request *request) {
-  char headers[SERVER_BUFFER_SIZE];
+static void parse_request(const char *request_string, rapid_request *request) {
+  char headers[RAPID_BUFFER_SIZE];
   char *body;
 
   char *headers_start = strstr(request_string, "\r\n");
@@ -141,7 +141,7 @@ static void parse_request(const char *request_string, Request *request) {
       char *value = strtok(NULL, "");
 
       if (name != NULL && value != NULL) {
-        request_add_query(request, name, value);
+        rapid_add_request_query(request, name, value);
       }
 
       pair = strtok(NULL, "&");
@@ -151,8 +151,8 @@ static void parse_request(const char *request_string, Request *request) {
   char *header = strtok(headers, "\r\n");
 
   while (header != NULL) {
-    char name[SERVER_MAX_HEADER_NAME_LENGTH];
-    char value[SERVER_MAX_HEADER_VALUE_LENGTH];
+    char name[RAPID_MAX_HEADER_NAME_LENGTH];
+    char value[RAPID_MAX_HEADER_VALUE_LENGTH];
     char *colon = strchr(header, ':');
 
     if (colon) {
@@ -165,7 +165,7 @@ static void parse_request(const char *request_string, Request *request) {
       strncpy(value, colon + 2, value_size);
       value[value_size] = '\0';
 
-      request_add_header(request, name, value);
+      rapid_add_request_header(request, name, value);
     }
 
     header = strtok(NULL, "\r\n");
@@ -177,7 +177,7 @@ static void parse_request(const char *request_string, Request *request) {
   }
 }
 
-static void serialize_response(char *response_string, Response *response) {
+static void serialize_response(char *response_string, rapid_response *response) {
   char *body = response->body == NULL
     ? NULL :
     cJSON_PrintUnformatted(response->body);
@@ -219,26 +219,26 @@ static long long get_current_time() {
   return (ts.tv_sec * 1000LL) + (ts.tv_nsec / 1000000);
 }
 
-static void *handle_client(void *arg) {
-  ClientContext *context = (ClientContext *) arg;
+static void *handle_connection(void *arg) {
+  rapid_connection *connection = (rapid_connection *) arg;
 
-  char request_string[SERVER_BUFFER_SIZE];
-  char response_string[SERVER_BUFFER_SIZE];
+  char request_string[RAPID_BUFFER_SIZE];
+  char response_string[RAPID_BUFFER_SIZE];
 
   long long request_time = get_current_time();
   pthread_t thread_id = pthread_self();
 
-  int bytes_read = read(context->socket_fd, request_string, SERVER_BUFFER_SIZE);
+  int bytes_read = read(connection->socket_fd, request_string, RAPID_BUFFER_SIZE);
 
   if (bytes_read < 0) {
-      close(context->socket_fd);
-      free(context);
+      close(connection->socket_fd);
+      free(connection);
       return NULL;
   }
 
   request_string[bytes_read] = '\0';
 
-  Request request = {
+  rapid_request request = {
     .time = request_time,
     .thread_id = (unsigned long) thread_id,
     .headers_size = 0,
@@ -246,7 +246,7 @@ static void *handle_client(void *arg) {
     .body = NULL
   };
 
-  Response response = {
+  rapid_response response = {
     .status = 0,
     .headers_size = 0,
     .body = NULL
@@ -256,8 +256,8 @@ static void *handle_client(void *arg) {
 
   int matched_route = 0;
 
-  for (int i = 0; i < context->server->routes_size; i++) {
-    ServerRoute *route = &context->server->routes[i];
+  for (int i = 0; i < connection->server->routes_size; i++) {
+    rapid_route *route = &connection->server->routes[i];
 
     if (match_middleware(route->method, route->path, request.method, request.path)) {
       if (strcmp(route->path, "*request") != 0) {
@@ -267,12 +267,12 @@ static void *handle_client(void *arg) {
       route->middleware(&request, &response);
 
       if (response.redirect) {
-        response_add_header(&response, "Location", response.redirect);
+        rapid_add_response_header(&response, "Location", response.redirect);
         break;
       }
 
       if (response.body) {
-        response_add_header(&response, "Content-Type", "application/json");
+        rapid_add_response_header(&response, "Content-Type", "application/json");
         break;
       }
     }
@@ -288,8 +288,8 @@ static void *handle_client(void *arg) {
 
   response.time = get_current_time();
 
-  for (int i = 0; i < context->server->routes_size; i++) {
-    ServerRoute *route = &context->server->routes[i];
+  for (int i = 0; i < connection->server->routes_size; i++) {
+    rapid_route *route = &connection->server->routes[i];
 
     if (match_response_hook(route->method, route->path, request.method, request.path)) {
       route->middleware(&request, &response);
@@ -298,9 +298,9 @@ static void *handle_client(void *arg) {
 
   serialize_response(response_string, &response);
 
-  send(context->socket_fd, response_string, strlen(response_string), 0);
-  close(context->socket_fd);
-  free(context);
+  send(connection->socket_fd, response_string, strlen(response_string), 0);
+  close(connection->socket_fd);
+  free(connection);
 
   if (request.body != NULL) {
     cJSON_Delete(request.body);
@@ -313,40 +313,40 @@ static void *handle_client(void *arg) {
   return NULL;
 }
 
-int server_init(Server **server) {
-  *server = (Server *) malloc(sizeof(Server));
+int rapid_init(rapid_server **server) {
+  *server = (rapid_server *) malloc(sizeof(rapid_server));
 
   if (*server == NULL) {
-    return ERR_SERVER_ALLOC;
+    return ERR_RAPID_ALLOC;
   }
 
   (*server)->socket_fd = socket(AF_INET, SOCK_STREAM, 0);
 
   if ((*server)->socket_fd == 0) {
-    return ERR_SERVER_SOCKET;
+    return ERR_RAPID_SOCKET;
   }
 
   return 0;
 }
 
-void server_route(Server *server, char *method, char *path, ServerMiddleware middleware) {
-  int n = server->routes_size++;
-  ServerRoute *route = &server->routes[n];
+void rapid_use_route(rapid_server *server, char *method, char *path, rapid_middleware middleware) {
+  int i = server->routes_size++;
+  rapid_route *route = &server->routes[i];
 
   route->method = method;
   route->path = path;
   route->middleware = middleware;
 }
 
-void server_middleware(Server *server, ServerMiddleware middleware) {
-  server_route(server, "*", "*request", middleware);
+void rapid_use_middleware(rapid_server *server, rapid_middleware middleware) {
+  rapid_use_route(server, "*", "*request", middleware);
 }
 
-void server_response_hook(Server *server, ServerMiddleware middleware) {
-  server_route(server, "*", "*response", middleware);
+void rapid_use_response_hook(rapid_server *server, rapid_middleware middleware) {
+  rapid_use_route(server, "*", "*response", middleware);
 }
 
-int server_listen(Server *server, int port, Callback callback) {
+int rapid_listen(rapid_server *server, int port, rapid_callback callback) {
   server->port = port;
 
   int socket_fd;
@@ -358,11 +358,11 @@ int server_listen(Server *server, int port, Callback callback) {
   address.sin_port = htons(server->port);
 
   if (bind(server->socket_fd, (struct sockaddr *) &address, (socklen_t) address_size) < 0) {
-    return ERR_SERVER_BIND;
+    return ERR_RAPID_BIND;
   }
 
   if (listen(server->socket_fd, 3) < 0) {
-    return ERR_SERVER_LISTEN;
+    return ERR_RAPID_LISTEN;
   }
 
   callback(server);
@@ -372,21 +372,21 @@ int server_listen(Server *server, int port, Callback callback) {
       continue;
     }
 
-    ClientContext *context = malloc(sizeof(ClientContext));
+    rapid_connection *connection = malloc(sizeof(rapid_connection));
 
-    if (context == NULL) {
+    if (connection == NULL) {
       close(socket_fd);
       continue;
     }
 
     pthread_t thread_id;
 
-    context->socket_fd = socket_fd;
-    context->server = server;
+    connection->socket_fd = socket_fd;
+    connection->server = server;
 
-    if (pthread_create(&thread_id, NULL, handle_client, context) != 0) {
+    if (pthread_create(&thread_id, NULL, handle_connection, connection) != 0) {
       close(socket_fd);
-      free(context);
+      free(connection);
       continue;
     }
 
@@ -396,7 +396,7 @@ int server_listen(Server *server, int port, Callback callback) {
   return 0;
 }
 
-void server_destroy(Server *server) {
+void rapid_destroy(rapid_server *server) {
   close(server->socket_fd);
   free(server);
 }

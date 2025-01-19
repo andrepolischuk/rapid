@@ -1,22 +1,22 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
-#include "server.h"
+#include "rapid.h"
 
-Server *server;
+rapid_server *server;
 
-void on_request(Request *request, Response *response) {
+void on_request(rapid_request *request, rapid_response *response) {
   // aggregate some data before routes
 }
 
-void on_response(Request *request, Response *response) {
+void on_response(rapid_request *request, rapid_response *response) {
   int server_time = response->time - request->time;
 
   printf("%s %s %d %dms\n", request->method, request->path, response->status, server_time);
 }
 
-void on_user(Request *request, Response *response) {
-  const char *id = request_get_query(request, "id");
+void on_user(rapid_request *request, rapid_response *response) {
+  const char *id = rapid_get_request_query(request, "id");
 
   cJSON *json = cJSON_CreateObject();
 
@@ -26,16 +26,16 @@ void on_user(Request *request, Response *response) {
   response->body = json;
 }
 
-void on_redirect(Request *request, Response *response) {
+void on_redirect(rapid_request *request, rapid_response *response) {
   response->redirect = "/user";
 }
 
-void on_listen(Server *server) {
+void on_listen(rapid_server *server) {
   printf("Server started on %d\n", server->port);
 }
 
 void on_destroy(int code) {
-  server_destroy(server);
+  rapid_destroy(server);
   printf("Server is shutting down...\n");
   exit(code);
 }
@@ -44,21 +44,21 @@ int main (int arc, char **argv) {
   int port = atoi(argv[1]);
   int error;
 
-  if ((error = server_init(&server))) {
-    puts(server_error(error));
+  if ((error = rapid_init(&server))) {
+    puts(rapid_get_error(error));
     return error;
   }
 
-  server_middleware(server, on_request);
-  server_route(server, "GET", "/user", on_user);
-  server_route(server, "GET", "/redirect", on_redirect);
-  server_response_hook(server, on_response);
+  rapid_use_middleware(server, on_request);
+  rapid_use_route(server, "GET", "/user", on_user);
+  rapid_use_route(server, "GET", "/redirect", on_redirect);
+  rapid_use_response_hook(server, on_response);
 
   signal(SIGINT, on_destroy);
   signal(SIGTERM, on_destroy);
 
-  if ((error = server_listen(server, port, on_listen))) {
-    puts(server_error(error));
+  if ((error = rapid_listen(server, port, on_listen))) {
+    puts(rapid_get_error(error));
     return error;
   }
 
