@@ -16,6 +16,7 @@ typedef struct {
   char *path;
   char *version;
   long long time;
+  unsigned long thread_id;
   Record query[SERVER_MAX_HEADERS_SIZE];
   int query_size;
   Record headers[SERVER_MAX_HEADERS_SIZE];
@@ -51,11 +52,16 @@ typedef struct {
 } ServerRoute;
 
 typedef struct {
-  int fd;
+  int socket_fd;
   int port;
   int routes_size;
   ServerRoute routes[SERVER_MAX_ROUTES_SIZE];
 } Server;
+
+typedef struct {
+  int socket_fd;
+  Server *server;
+} ClientContext;
 
 typedef enum {
   ERR_SERVER_UNKNOWN = -10,

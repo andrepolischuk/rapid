@@ -3,6 +3,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <pthread.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <cjson/cJSON.h>
@@ -218,22 +219,28 @@ static long long get_current_time() {
   return (ts.tv_sec * 1000LL) + (ts.tv_nsec / 1000000);
 }
 
-static void handle_client(Server *server, int socket) {
+static void *handle_client(void *arg) {
+  ClientContext *context = (ClientContext *) arg;
+
   char request_string[SERVER_BUFFER_SIZE];
   char response_string[SERVER_BUFFER_SIZE];
 
   long long request_time = get_current_time();
-  int bytes_read = read(socket, request_string, SERVER_BUFFER_SIZE);
+  pthread_t thread_id = pthread_self();
+
+  int bytes_read = read(context->socket_fd, request_string, SERVER_BUFFER_SIZE);
 
   if (bytes_read < 0) {
-      close(socket);
-      return;
+      close(context->socket_fd);
+      free(context);
+      return NULL;
   }
 
   request_string[bytes_read] = '\0';
 
   Request request = {
     .time = request_time,
+    .thread_id = (unsigned long) thread_id,
     .headers_size = 0,
     .query_size = 0,
     .body = NULL
@@ -249,8 +256,8 @@ static void handle_client(Server *server, int socket) {
 
   int matched_route = 0;
 
-  for (int i = 0; i < server->routes_size; i++) {
-    ServerRoute *route = &server->routes[i];
+  for (int i = 0; i < context->server->routes_size; i++) {
+    ServerRoute *route = &context->server->routes[i];
 
     if (match_middleware(route->method, route->path, request.method, request.path)) {
       if (strcmp(route->path, "*request") != 0) {
@@ -281,8 +288,8 @@ static void handle_client(Server *server, int socket) {
 
   response.time = get_current_time();
 
-  for (int i = 0; i < server->routes_size; i++) {
-    ServerRoute *route = &server->routes[i];
+  for (int i = 0; i < context->server->routes_size; i++) {
+    ServerRoute *route = &context->server->routes[i];
 
     if (match_response_hook(route->method, route->path, request.method, request.path)) {
       route->middleware(&request, &response);
@@ -291,8 +298,9 @@ static void handle_client(Server *server, int socket) {
 
   serialize_response(response_string, &response);
 
-  send(socket, response_string, strlen(response_string), 0);
-  close(socket);
+  send(context->socket_fd, response_string, strlen(response_string), 0);
+  close(context->socket_fd);
+  free(context);
 
   if (request.body != NULL) {
     cJSON_Delete(request.body);
@@ -301,6 +309,8 @@ static void handle_client(Server *server, int socket) {
   if (response.body != NULL) {
     cJSON_Delete(response.body);
   }
+
+  return NULL;
 }
 
 int server_init(Server **server) {
@@ -310,9 +320,9 @@ int server_init(Server **server) {
     return ERR_SERVER_ALLOC;
   }
 
-  (*server)->fd = socket(AF_INET, SOCK_STREAM, 0);
+  (*server)->socket_fd = socket(AF_INET, SOCK_STREAM, 0);
 
-  if ((*server)->fd == 0) {
+  if ((*server)->socket_fd == 0) {
     return ERR_SERVER_SOCKET;
   }
 
@@ -339,7 +349,7 @@ void server_response_hook(Server *server, ServerMiddleware middleware) {
 int server_listen(Server *server, int port, Callback callback) {
   server->port = port;
 
-  int socket;
+  int socket_fd;
   struct sockaddr_in address;
   int address_size = sizeof(address);
 
@@ -347,28 +357,46 @@ int server_listen(Server *server, int port, Callback callback) {
   address.sin_addr.s_addr = htonl(INADDR_ANY);
   address.sin_port = htons(server->port);
 
-  if (bind(server->fd, (struct sockaddr *) &address, (socklen_t) address_size) < 0) {
+  if (bind(server->socket_fd, (struct sockaddr *) &address, (socklen_t) address_size) < 0) {
     return ERR_SERVER_BIND;
   }
 
-  if (listen(server->fd, 3) < 0) {
+  if (listen(server->socket_fd, 3) < 0) {
     return ERR_SERVER_LISTEN;
   }
 
   callback(server);
 
   while (1) {
-    if ((socket = accept(server->fd, (struct sockaddr *) &address, (socklen_t*) &address_size)) < 0) {
+    if ((socket_fd = accept(server->socket_fd, (struct sockaddr *) &address, (socklen_t*) &address_size)) < 0) {
       continue;
     }
 
-    handle_client(server, socket);
+    ClientContext *context = malloc(sizeof(ClientContext));
+
+    if (context == NULL) {
+      close(socket_fd);
+      continue;
+    }
+
+    pthread_t thread_id;
+
+    context->socket_fd = socket_fd;
+    context->server = server;
+
+    if (pthread_create(&thread_id, NULL, handle_client, context) != 0) {
+      close(socket_fd);
+      free(context);
+      continue;
+    }
+
+    pthread_detach(thread_id);
   }
 
   return 0;
 }
 
 void server_destroy(Server *server) {
-  close(server->fd);
+  close(server->socket_fd);
   free(server);
 }
