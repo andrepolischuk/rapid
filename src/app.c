@@ -3,16 +3,14 @@
 #include <signal.h>
 #include "rapid.h"
 
+enum server_error {
+  ERR_NOT_FOUND = -10,
+};
+
 rapid_server *server;
 
 void on_request(rapid_request *request, rapid_response *response) {
   // aggregate some data before routes
-}
-
-void on_response(rapid_request *request, rapid_response *response) {
-  int server_time = response->time - request->time;
-
-  printf("%s %s %d %dμs\n", request->method, request->path, response->status, server_time);
 }
 
 void on_user(rapid_request *request, rapid_response *response) {
@@ -20,14 +18,27 @@ void on_user(rapid_request *request, rapid_response *response) {
 
   cJSON *json = cJSON_CreateObject();
 
-  cJSON_AddStringToObject(json, "id", id);
-  cJSON_AddStringToObject(json, "name", "Foo Bar");
+  if (id == NULL) {
+    response->status = NOT_FOUND;
+
+    cJSON_AddStringToObject(json, "error", "User not found");
+    cJSON_AddNumberToObject(json, "error_code", ERR_NOT_FOUND);
+  } else {
+    cJSON_AddStringToObject(json, "id", id);
+    cJSON_AddStringToObject(json, "name", "Foo Bar");
+  }
 
   response->body = json;
 }
 
 void on_redirect(rapid_request *request, rapid_response *response) {
-  response->redirect = "/user";
+  response->redirect = "/user?id=123";
+}
+
+void on_response(rapid_request *request, rapid_response *response) {
+  int server_time = response->time - request->time;
+
+  printf("%s %s %d %dμs\n", request->method, request->path, response->status, server_time);
 }
 
 void on_listen(rapid_server *server) {

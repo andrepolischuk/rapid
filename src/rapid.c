@@ -14,7 +14,7 @@ typedef struct {
   const char *value;
 } rapid_response_status_record;
 
-static rapid_response_status_record STATUSES[] = {
+static const rapid_response_status_record STATUSES[] = {
   {OK, "200 OK"},
   {MOVED_PERMANENTLY, "301 Moved Permanently"},
   {FOUND, "302 Found"},
@@ -22,6 +22,7 @@ static rapid_response_status_record STATUSES[] = {
   {UNAUTHORIZED, "401 Unauthorized"},
   {FORBIDDEN, "403 Forbidden"},
   {NOT_FOUND, "404 Not Found"},
+  {INTERNAL_SERVER_ERROR, "500 Internal Server Error"},
 };
 
 static const char *get_status(int code) {
@@ -39,7 +40,7 @@ typedef struct {
   const char *value;
 } rapid_error_record;
 
-static rapid_error_record ERRORS[] = {
+static const rapid_error_record ERRORS[] = {
   {ERR_RAPID_UNKNOWN, "Unknown error"},
   {ERR_RAPID_ALLOC, "Server allocation failed"},
   {ERR_RAPID_SOCKET, "Server socket failed"},

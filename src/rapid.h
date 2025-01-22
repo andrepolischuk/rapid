@@ -32,6 +32,7 @@ typedef enum {
   UNAUTHORIZED = 401,
   FORBIDDEN = 403,
   NOT_FOUND = 404,
+  INTERNAL_SERVER_ERROR = 500,
 } rapid_response_status;
 
 typedef struct {
@@ -39,6 +40,7 @@ typedef struct {
   long long time;
   rapid_record headers[RAPID_MAX_HEADERS_SIZE];
   int headers_size;
+  int error_code;
   char *redirect;
   cJSON *body;
 } rapid_response;
