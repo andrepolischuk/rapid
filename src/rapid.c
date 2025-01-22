@@ -216,7 +216,7 @@ static int match_response_hook(char *route_method, char *route_path, char *reque
 static long long get_current_time() {
   struct timespec ts;
   clock_gettime(CLOCK_REALTIME, &ts);
-  return (ts.tv_sec * 1000LL) + (ts.tv_nsec / 1000000);
+  return (ts.tv_sec * 1000000LL) + (ts.tv_nsec / 1000);
 }
 
 static void *handle_connection(void *arg) {
@@ -225,22 +225,7 @@ static void *handle_connection(void *arg) {
   char request_string[RAPID_BUFFER_SIZE];
   char response_string[RAPID_BUFFER_SIZE];
 
-  long long request_time = get_current_time();
-  pthread_t thread_id = pthread_self();
-
-  int bytes_read = read(connection->socket_fd, request_string, RAPID_BUFFER_SIZE);
-
-  if (bytes_read < 0) {
-      close(connection->socket_fd);
-      free(connection);
-      return NULL;
-  }
-
-  request_string[bytes_read] = '\0';
-
   rapid_request request = {
-    .time = request_time,
-    .thread_id = (unsigned long) thread_id,
     .headers_size = 0,
     .query_size = 0,
     .body = NULL
@@ -251,6 +236,19 @@ static void *handle_connection(void *arg) {
     .headers_size = 0,
     .body = NULL
   };
+
+  request.time = get_current_time();
+  request.thread_id = (unsigned long) pthread_self();
+
+  int bytes_read = read(connection->socket_fd, request_string, RAPID_BUFFER_SIZE);
+
+  if (bytes_read < 0) {
+      close(connection->socket_fd);
+      free(connection);
+      return NULL;
+  }
+
+  request_string[bytes_read] = '\0';
 
   parse_request(request_string, &request);
 
@@ -294,9 +292,9 @@ static void *handle_connection(void *arg) {
   sprintf(server_time, "%lld", response.time - request.time);
   rapid_add_response_header(&response, "X-Server-Time", server_time);
 
-  char thread_id_header[20];
-  sprintf(thread_id_header, "%lu", request.thread_id);
-  rapid_add_response_header(&response, "X-Thread-Id", thread_id_header);
+  char thread_id[20];
+  sprintf(thread_id, "%lu", request.thread_id);
+  rapid_add_response_header(&response, "X-Thread-Id", thread_id);
 
   for (int i = 0; i < connection->server->routes_size; i++) {
     rapid_route *route = &connection->server->routes[i];

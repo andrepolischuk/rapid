@@ -12,7 +12,7 @@ void on_request(rapid_request *request, rapid_response *response) {
 void on_response(rapid_request *request, rapid_response *response) {
   int server_time = response->time - request->time;
 
-  printf("%s %s %d %dms\n", request->method, request->path, response->status, server_time);
+  printf("%s %s %d %dμs\n", request->method, request->path, response->status, server_time);
 }
 
 void on_user(rapid_request *request, rapid_response *response) {
