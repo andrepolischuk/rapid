@@ -95,6 +95,4 @@ void rapid_use_route(rapid_server *server, char *method, char *path, rapid_middl
 
 void rapid_use_middleware(rapid_server *server, rapid_middleware middleware);
 
-void rapid_use_response_hook(rapid_server *server, rapid_middleware middleware);
-
 void rapid_destroy(rapid_server *server);

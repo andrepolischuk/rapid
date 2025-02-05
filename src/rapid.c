@@ -205,13 +205,9 @@ static void serialize_response(char *response_string, rapid_response *response) 
   }
 }
 
-static int match_middleware(char *route_method, char *route_path, char *request_method, char *request_path) {
+static int match_route(char *route_method, char *route_path, char *request_method, char *request_path) {
   return (strcmp(route_method, request_method) == 0 || strcmp(route_method, "*") == 0) &&
-    (strcmp(route_path, request_path) == 0 || strcmp(route_path, "*request") == 0);
-}
-
-static int match_response_hook(char *route_method, char *route_path, char *request_method, char *request_path) {
-  return strcmp(route_method, "*") == 0 && strcmp(route_path, "*response") == 0;
+    (strcmp(route_path, request_path) == 0 || strcmp(route_path, "*") == 0);
 }
 
 static long long get_current_time() {
@@ -258,8 +254,8 @@ static void *handle_connection(void *arg) {
   for (int i = 0; i < connection->server->routes_size; i++) {
     rapid_route *route = &connection->server->routes[i];
 
-    if (match_middleware(route->method, route->path, request.method, request.path)) {
-      if (strcmp(route->path, "*request") != 0) {
+    if (match_route(route->method, route->path, request.method, request.path)) {
+      if (strcmp(route->path, "*") != 0) {
         matched_route = 1;
       }
 
@@ -296,14 +292,6 @@ static void *handle_connection(void *arg) {
   char thread_id[20];
   sprintf(thread_id, "%lu", request.thread_id);
   rapid_add_response_header(&response, "X-Thread-Id", thread_id);
-
-  for (int i = 0; i < connection->server->routes_size; i++) {
-    rapid_route *route = &connection->server->routes[i];
-
-    if (match_response_hook(route->method, route->path, request.method, request.path)) {
-      route->middleware(&request, &response);
-    }
-  }
 
   serialize_response(response_string, &response);
 
@@ -348,11 +336,7 @@ void rapid_use_route(rapid_server *server, char *method, char *path, rapid_middl
 }
 
 void rapid_use_middleware(rapid_server *server, rapid_middleware middleware) {
-  rapid_use_route(server, "*", "*request", middleware);
-}
-
-void rapid_use_response_hook(rapid_server *server, rapid_middleware middleware) {
-  rapid_use_route(server, "*", "*response", middleware);
+  rapid_use_route(server, "*", "*", middleware);
 }
 
 int rapid_listen(rapid_server *server, int port, rapid_callback callback) {

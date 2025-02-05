@@ -10,7 +10,7 @@ enum server_error {
 rapid_server *server;
 
 void on_request(rapid_request *request, rapid_response *response) {
-  // aggregate some data before routes
+  printf("%s %s\n", request->method, request->path);
 }
 
 void on_user(rapid_request *request, rapid_response *response) {
@@ -35,12 +35,6 @@ void on_redirect(rapid_request *request, rapid_response *response) {
   response->redirect = "/user?id=123";
 }
 
-void on_response(rapid_request *request, rapid_response *response) {
-  int server_time = response->time - request->time;
-
-  printf("%s %s %d %dμs\n", request->method, request->path, response->status, server_time);
-}
-
 void on_listen(rapid_server *server) {
   printf("Server started on %d\n", server->port);
 }
@@ -63,7 +57,6 @@ int main (int arc, char **argv) {
   rapid_use_middleware(server, on_request);
   rapid_use_route(server, "GET", "/user", on_user);
   rapid_use_route(server, "GET", "/redirect", on_redirect);
-  rapid_use_response_hook(server, on_response);
 
   signal(SIGINT, on_destroy);
   signal(SIGTERM, on_destroy);
